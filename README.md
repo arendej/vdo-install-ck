@@ -1,5 +1,5 @@
 # vdo-install-ck
-install vdo and its modules on a CentOS7/ RHEL7 server running a custom kernel
+This is to install vdo and its module on a CentOS7/ RHEL7 server running a **_custom kernel_**
 
 If you run a custom kernel, such as kernel-ml, then the pre-packaged vdo kmdo-kvdo kernel module won't work.
 
