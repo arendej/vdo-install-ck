@@ -5,11 +5,11 @@
   become_method: su
   become: yes
   vars:
-    tmpdir: "/var/tmp"
+    tmpdir: "~/tmp"
   tasks:
 
-  - name: warn
-    debug: msg="Please ensure you've done a git clone/pull for each vdo/ kvdo repo"
+  - name: clear the git cloned paths if they exist
+    shell: "rm -rf {{ tmpdir }}/{kv,v}do"
 
   - name: git clone vdo
     git:
@@ -21,14 +21,14 @@
     git:
       clone: yes
       repo: 'https://github.com/dm-vdo/kvdo.git'
-      dest: "{{ tmpdir }}/vdo"
+      dest: "{{ tmpdir }}/kvdo"
 
 
   - name: run make for vdo
-    shell: "cd {{ tmpdir }}/vdo && make"
+    raw: "cd {{ tmpdir }}/vdo && make"
 
   - name: run kvdo make
-    shell: "cd {{ tmpdir }}/kvdo && make -C /usr/src/kernels/`uname -r` M=`pwd`"
+    raw: "cd {{ tmpdir }}/kvdo && make -C /usr/src/kernels/`uname -r` M=`pwd`"
 
   - name: copy modules to current kernel
     shell: "cd {{ tmpdir }}/kvdo && cp uds/uds.ko vdo/kvdo.ko /lib/modules/`uname -r`/extra/"
