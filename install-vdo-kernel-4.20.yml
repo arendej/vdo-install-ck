@@ -1,0 +1,61 @@
+--- # install VDO given the case of a non-stock kernel
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  become_method: su
+  become: yes
+  vars:
+    tmpdir: "~/tmp"
+  tasks:
+
+  - name: clear the git cloned paths if they exist
+    shell: "rm -rf {{ tmpdir }}/{kv,v}do"
+
+  - name: git clone vdo
+    git:
+      clone: yes
+      repo: 'https://github.com/dm-vdo/vdo.git'
+      dest: "{{ tmpdir }}/vdo"
+
+  - name: git clone kvdo
+    git:
+      clone: yes
+      repo: 'https://github.com/dm-vdo/kvdo.git'
+      dest: "{{ tmpdir }}/kvdo"
+
+  - name: remove -Werror from all Makefiles (1/3)
+    shell: "sed -i '/-Werror/d' {{tmpdir}}/kvdo/Makefile"
+  - name: remove -Werror from all Makefiles (2/3)
+    shell: "sed -i '/-Werror/d' {{tmpdir}}/kvdo/vdo/Makefile"
+  - name: remove -Werror from all Makefiles (3/3)
+    shell: "sed -i '/-Werror/d' {{tmpdir}}/kvdo/uds/Makefile"
+
+  - name: run make for vdo
+    raw: "cd {{ tmpdir }}/vdo && make"
+
+  - name: run kvdo make
+    raw: "cd {{ tmpdir }}/kvdo && make -C /usr/src/kernels/`uname -r` M=`pwd`"
+
+  - name: copy modules to current kernel
+    shell: "cd {{ tmpdir }}/kvdo && cp uds/uds.ko vdo/kvdo.ko /lib/modules/`uname -r`/extra/"
+
+  - name: depmod & modprobe
+    shell: "cd {{ tmpdir }}/kvdo && depmod -a; modprobe uds; modprobe kvdo"
+
+  - name: verify vdo in lsmod
+    shell: lsmod |grep vdo
+    register: lmodvdo
+
+  - debug: var=lsmodvdo.stdout
+
+  - name: make install vdo
+    shell: "cd {{ tmpdir }}/vdo && make install"
+
+  - name: re-start vdo
+    service:
+      name: vdo
+      state: restarted
+
+  - name: daemon-reload
+    systemd: daemon_reload=yes
+      
