@@ -12,81 +12,89 @@
     tmpdir: "~/tmp"
 
   tasks:
-  - block:
-      - name: get current kvdo version
-        command: modinfo kvdo -F version
-        changed_when: no
-        register: current_version
-        failed_when: current_version != vdo_version
-    rescue:
-      - name: clear the git cloned paths if they exist
-        file:
-          state: absent
-          path: "{{ tmpdir }}/{{ item }}"
-        loop:
-          - vdo
-          - kvdo
+    - name: install build dependencies
+      yum:
+        state: present
+        name:
+          - '@development-tools'
+          - lvm2-devel
+          - zlib-devel
 
-      - name: git clone vdo
-        git:
-          clone: yes
-          repo: 'https://github.com/dm-vdo/vdo.git'
-          version: "{{ vdo_version }}"
-          dest: "{{ tmpdir }}/vdo"
+    - block:
+        - name: get current kvdo version
+          command: modinfo kvdo -F version
+          changed_when: no
+          register: current_version
+          failed_when: current_version != vdo_version
+      rescue:
+        - name: clear the git cloned paths if they exist
+          file:
+            state: absent
+            path: "{{ tmpdir }}/{{ item }}"
+          loop:
+            - vdo
+            - kvdo
 
-      - name: git clone kvdo
-        git:
-          clone: yes
-          repo: 'https://github.com/dm-vdo/kvdo.git'
-          version: "{{ vdo_version }}"
-          dest: "{{ tmpdir }}/kvdo"
+        - name: git clone vdo
+          git:
+            clone: yes
+            repo: 'https://github.com/dm-vdo/vdo.git'
+            version: "{{ vdo_version }}"
+            dest: "{{ tmpdir }}/vdo"
 
-      - name: make vdo
-        command: make
-        args:
-          chdir: "{{ tmpdir }}/vdo"
+        - name: git clone kvdo
+          git:
+            clone: yes
+            repo: 'https://github.com/dm-vdo/kvdo.git'
+            version: "{{ vdo_version }}"
+            dest: "{{ tmpdir }}/kvdo"
 
-      - name: make kvdo
-        command: "make -C /usr/src/kernels/{{ ansible_kernel }} M={{ tmpdir }}/kvdo"
-        args:
-          chdir: "{{ tmpdir }}/kvdo"
+        - name: make vdo
+          command: make
+          args:
+            chdir: "{{ tmpdir }}/vdo"
 
-      - name: copy modules to current kernel
-        synchronize:
-          src: "{{ tmpdir }}/{{ item }}"
-          dest: /lib/modules/{{ ansible_kernel }}/extra/
-        loop:
-          - uds/uds.ko
-          - vdo/kvdo.ko
+        - name: make kvdo
+          command: "make -C /usr/src/kernels/{{ ansible_kernel }} M={{ tmpdir }}/kvdo"
+          args:
+            chdir: "{{ tmpdir }}/kvdo"
 
-      - name: depmod
-        command: depmod -a
-        args:
-          chdir: "{{ tmpdir }}/kvdo"
-        changed_when: no
+        - name: copy modules to current kernel
+          synchronize:
+            src: "{{ tmpdir }}/{{ item }}"
+            dest: /lib/modules/{{ ansible_kernel }}/extra/
+          loop:
+            - uds/uds.ko
+            - vdo/kvdo.ko
 
-      - name: modprobe
-        modprobe:
-          state: present
-          name: "{{ item }}"
-        loop:
-          - uds
-          - kvdo
+        - name: depmod
+          command: depmod -a
+          args:
+            chdir: "{{ tmpdir }}/kvdo"
+          changed_when: no
 
-      - name: verify vdo in lsmod
-        shell: lsmod | grep vdo
-        register: lsmod_check
+        - name: modprobe
+          modprobe:
+            state: present
+            name: "{{ item }}"
+          loop:
+            - uds
+            - kvdo
 
-      - debug:
-          msg: "{{ lsmod_check.stdout }}"
+        - name: verify vdo in lsmod
+          shell: lsmod | grep vdo
+          register: lsmod_check
 
-      - name: make install vdo userland tools
-        command: make install
-        args:
-          chdir: "{{ tmpdir }}/vdo"
+        - debug:
+            msg: "{{ lsmod_check.stdout }}"
 
-      - name: re-start vdo
-        systemd:
-          name: vdo
-          state: restarted
-          daemon_reload: yes
+        - name: make install vdo userland tools
+          command: make install
+          args:
+            chdir: "{{ tmpdir }}/vdo"
+
+        - name: re-start vdo
+          systemd:
+            name: vdo
+            state: restarted
+            daemon_reload: yes
