@@ -43,11 +43,13 @@
 
       - name: make vdo
         command: make
-        chdir: "{{ tmpdir }}/vdo"
+        args:
+          chdir: "{{ tmpdir }}/vdo"
 
       - name: make kvdo
         command: "make -C /usr/src/kernels/{{ ansible_kernel }} M={{ tmpdir }}/kvdo"
-        chdir: "{{ tmpdir }}/kvdo"
+        args:
+          chdir: "{{ tmpdir }}/kvdo"
 
       - name: copy modules to current kernel
         synchronize:
@@ -59,7 +61,8 @@
 
       - name: depmod
         command: depmod -a
-        chdir: "{{ tmpdir }}/kvdo"
+        args:
+          chdir: "{{ tmpdir }}/kvdo"
         changed_when: no
 
       - name: modprobe
@@ -79,7 +82,8 @@
 
       - name: make install vdo userland tools
         command: make install
-        chdir: "{{ tmpdir }}/vdo"
+        args:
+          chdir: "{{ tmpdir }}/vdo"
 
       - name: re-start vdo
         systemd:
