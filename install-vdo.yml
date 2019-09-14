@@ -39,7 +39,8 @@
           rescue:
             - name: swap stock kernel-headers for custom
               # not posible with Ansible's yum module :(
-              command: yum swap kernel-headers {{ custom_kernel }}-headers
+              command: yum swap -y kernel-headers {{ custom_kernel }}-headers
+              warn: no
 
         - name: clear the git cloned paths if they exist
           file:
