@@ -29,18 +29,20 @@
               - '@development'
               - lvm2-devel
               - zlib-devel
+              - "{{ custom_kernel }}-devel"
 
         - block:
             - name: check if we have {{ custom_kernel }}-headers
               yum:
                 list: "{{ custom_kernel }}-headers"
               register: headers_check
-              failed_when: "'installed' not in headers_check.results|map(attribute='yumstate')"
+              failed_when: "'installed' not in (headers_check.results|map(attribute='yumstate'))"
           rescue:
             - name: swap stock kernel-headers for custom
-              # not posible with Ansible's yum module :(
               command: yum swap -y kernel-headers {{ custom_kernel }}-headers
-              warn: no
+              # "swap" is not possible with the yum module, so don't yell at us :(
+              args:
+                warn: no
 
         - name: clear the git cloned paths if they exist
           file:
