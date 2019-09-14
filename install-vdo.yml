@@ -1,55 +1,88 @@
---- # install VDO given the case of a non-stock kernel
+---
+# install VDO given the case of a non-stock kernel
 - hosts: localhost
   connection: local
   gather_facts: yes
   become_method: su
   become: yes
+
   vars:
+    #vdo_version: HEAD
+    vdo_version: 6.1.3.4
     tmpdir: "~/tmp"
+
   tasks:
+  - block:
+      - name: get current kvdo version
+        command: modinfo kvdo -F version
+        changed_when: no
+        register: current_version
+        failed_when: current_version != vdo_version
+    rescue:
+      - name: clear the git cloned paths if they exist
+        file:
+          state: absent
+          path: "{{ tmpdir }}/{{ item }}"
+        loop:
+          - vdo
+          - kvdo
 
-  - name: clear the git cloned paths if they exist
-    shell: "rm -rf {{ tmpdir }}/{kv,v}do"
+      - name: git clone vdo
+        git:
+          clone: yes
+          repo: 'https://github.com/dm-vdo/vdo.git'
+          version: "{{ vdo_version }}"
+          dest: "{{ tmpdir }}/vdo"
 
-  - name: git clone vdo
-    git:
-      clone: yes
-      repo: 'https://github.com/dm-vdo/vdo.git'
-      dest: "{{ tmpdir }}/vdo"
+      - name: git clone kvdo
+        git:
+          clone: yes
+          repo: 'https://github.com/dm-vdo/kvdo.git'
+          version: "{{ vdo_version }}"
+          dest: "{{ tmpdir }}/kvdo"
 
-  - name: git clone kvdo
-    git:
-      clone: yes
-      repo: 'https://github.com/dm-vdo/kvdo.git'
-      dest: "{{ tmpdir }}/kvdo"
+      - name: make vdo
+        command: make
+        chdir: "{{ tmpdir }}/vdo"
 
+      - name: make kvdo
+        command: "make -C /usr/src/kernels/{{ ansible_kernel }} M={{ tmpdir }}/kvdo"
+        chdir: "{{ tmpdir }}/kvdo"
 
-  - name: run make for vdo
-    raw: "cd {{ tmpdir }}/vdo && make"
+      - name: copy modules to current kernel
+        synchronize:
+          src: "{{ tmpdir }}/{{ item }}"
+          dest: /lib/modules/{{ ansible_kernel }}/extra/
+        loop:
+          - uds/uds.ko
+          - vdo/kvdo.ko
 
-  - name: run kvdo make
-    raw: "cd {{ tmpdir }}/kvdo && make -C /usr/src/kernels/`uname -r` M=`pwd`"
+      - name: depmod
+        command: depmod -a
+        chdir: "{{ tmpdir }}/kvdo"
+        changed_when: no
 
-  - name: copy modules to current kernel
-    shell: "cd {{ tmpdir }}/kvdo && cp uds/uds.ko vdo/kvdo.ko /lib/modules/`uname -r`/extra/"
+      - name: modprobe
+        modprobe:
+          state: present
+          name: "{{ item }}"
+        loop:
+          - uds
+          - kvdo
 
-  - name: depmod & modprobe
-    shell: "cd {{ tmpdir }}/kvdo && depmod -a; modprobe uds; modprobe kvdo"
+      - name: verify vdo in lsmod
+        shell: lsmod | grep vdo
+        register: lsmod_check
 
-  - name: verify vdo in lsmod
-    shell: lsmod |grep vdo
-    register: lmodvdo
+      - debug:
+          msg: "{{ lsmod_check.stdout }}"
 
-  - debug: var=lsmodvdo.stdout
+      - name: make install vdo userland tools
+        command: make install
+        chdir: "{{ tmpdir }}/vdo"
 
-  - name: make install vdo
-    shell: "cd {{ tmpdir }}/vdo && make install"
-
-  - name: re-start vdo
-    service:
-      name: vdo
-      state: restarted
-
-  - name: daemon-reload
-    systemd: daemon_reload=yes
-      
+      - name: re-start vdo
+        systemd:
+          name: vdo
+          state: restarted
+          daemon_reload: yes
