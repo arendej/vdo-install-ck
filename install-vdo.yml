@@ -16,7 +16,7 @@
       yum:
         state: present
         name:
-          - '@development-tools'
+          - '@development'
           - lvm2-devel
           - zlib-devel
 
