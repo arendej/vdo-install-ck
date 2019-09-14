@@ -8,31 +8,39 @@
 
   vars:
     custom_kernel: kernel-ml
-    # vdo_version is left at 6.1, as 6.2 uses python3 (absent in CentOS7)
     # The version can be specified as "master" to always grab the latest
+    # vdo_version is left at 6.1, as 6.2 uses python3 (absent in CentOS 7)
     vdo_version: 6.1.3.4
     kvdo_version: 6.2.1.138
-    tmpdir: "~/tmp"
+    tmpdir: "/tmp/vdo_build"
 
   tasks:
-    - name: install build dependencies
-      yum:
-        state: present
-        name:
-          - '@development'
-          - lvm2-devel
-          - zlib-devel
-          - "{{ custom_kernel }}-headers"
-          # You may need to swap your headers package
-          # https://unix.stackexchange.com/a/158588
-
     - block:
-        - name: get current kvdo version
+        - name: is our desired version met?
           command: modinfo kvdo -F version
           changed_when: no
           register: current_version
-          failed_when: current_version != vdo_version
+          failed_when: current_version.stdout != kvdo_version
       rescue:
+        - name: install build dependencies
+          yum:
+            state: present
+            name:
+              - '@development'
+              - lvm2-devel
+              - zlib-devel
+
+        - block:
+            - name: check if we have {{ custom_kernel }}-headers
+              yum:
+                list: "{{ custom_kernel }}-headers"
+              register: headers_check
+              failed_when: "'installed' not in headers_check.results|map(attribute='yumstate')"
+          rescue:
+            - name: swap stock kernel-headers for custom
+              # not posible with Ansible's yum module :(
+              command: yum swap kernel-headers {{ custom_kernel }}-headers
+
         - name: clear the git cloned paths if they exist
           file:
             state: absent
@@ -55,6 +63,15 @@
             version: "{{ kvdo_version }}"
             dest: "{{ tmpdir }}/kvdo"
 
+        - name: suppress VLA warnings in kvdo Makefiles
+          lineinfile:
+            path: "{{ tmpdir }}/kvdo/{{ item }}/Makefile"
+            insertafter: "^\t\t-Werror"
+            line: "\t\t-Wno-vla\t\t\t\t\\"
+          loop:
+            - uds
+            - vdo
+
         - name: make vdo
           command: make
           args:
@@ -67,7 +84,7 @@
 
         - name: copy modules to current kernel
           synchronize:
-            src: "{{ tmpdir }}/{{ item }}"
+            src: "{{ tmpdir }}/kvdo/{{ item }}"
             dest: /lib/modules/{{ ansible_kernel }}/extra/
           loop:
             - uds/uds.ko
@@ -76,7 +93,7 @@
         - name: depmod
           command: depmod -a
           args:
-            chdir: "{{ tmpdir }}/kvdo"
+            chdir: /lib/modules/{{ ansible_kernel }}/extra
           changed_when: no
 
         - name: modprobe
@@ -87,19 +104,12 @@
             - uds
             - kvdo
 
-        - name: verify vdo in lsmod
-          shell: lsmod | grep vdo
-          register: lsmod_check
-
-        - debug:
-            msg: "{{ lsmod_check.stdout }}"
-
         - name: make install vdo userland tools
           command: make install
           args:
             chdir: "{{ tmpdir }}/vdo"
 
-        - name: re-start vdo
+        - name: restart vdo
           systemd:
             name: vdo
             state: restarted
