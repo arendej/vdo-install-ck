@@ -7,6 +7,7 @@
   become: yes
 
   vars:
+    custom_kernel: kernel-ml
     #vdo_version: HEAD
     vdo_version: 6.1.3.4
     tmpdir: "~/tmp"
@@ -19,6 +20,8 @@
           - '@development'
           - lvm2-devel
           - zlib-devel
+          - "{{ custom_kernel }}-headers"
+          - "{{ custom_kernel }}-devel"
 
     - block:
         - name: get current kvdo version
