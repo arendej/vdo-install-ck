@@ -1,55 +1,119 @@
---- # install VDO given the case of a non-stock kernel
+---
+# install VDO given the case of a non-stock kernel
 - hosts: localhost
   connection: local
   gather_facts: yes
   become_method: su
   become: yes
+
   vars:
-    tmpdir: "~/tmp"
+    custom_kernel: kernel-ml
+    # The version can be specified as "master" to always grab the latest
+    # vdo_version is left at 6.1, as 6.2 uses python3 (absent in CentOS 7)
+    vdo_version: 6.1.3.4
+    kvdo_version: 6.2.1.138
+    tmpdir: "/tmp/vdo_build"
+
   tasks:
+    - block:
+        - name: is our desired version met?
+          command: modinfo kvdo -F version
+          changed_when: no
+          register: current_version
+          failed_when: current_version.stdout != kvdo_version
+      rescue:
+        - name: install build dependencies
+          yum:
+            state: present
+            name:
+              - '@development'
+              - lvm2-devel
+              - zlib-devel
+              - "{{ custom_kernel }}-devel"
 
-  - name: clear the git cloned paths if they exist
-    shell: "rm -rf {{ tmpdir }}/{kv,v}do"
+        - block:
+            - name: check if we have {{ custom_kernel }}-headers
+              yum:
+                list: "{{ custom_kernel }}-headers"
+              register: headers_check
+              failed_when: "'installed' not in (headers_check.results|map(attribute='yumstate'))"
+          rescue:
+            - name: swap stock kernel-headers for custom
+              command: yum swap -y kernel-headers {{ custom_kernel }}-headers
+              # "swap" is not possible with the yum module, so don't yell at us :(
+              args:
+                warn: no
 
-  - name: git clone vdo
-    git:
-      clone: yes
-      repo: 'https://github.com/dm-vdo/vdo.git'
-      dest: "{{ tmpdir }}/vdo"
+        - name: clear the git cloned paths if they exist
+          file:
+            state: absent
+            path: "{{ tmpdir }}/{{ item }}"
+          loop:
+            - vdo
+            - kvdo
 
-  - name: git clone kvdo
-    git:
-      clone: yes
-      repo: 'https://github.com/dm-vdo/kvdo.git'
-      dest: "{{ tmpdir }}/kvdo"
+        - name: git clone vdo
+          git:
+            clone: yes
+            repo: 'https://github.com/dm-vdo/vdo.git'
+            version: "{{ vdo_version }}"
+            dest: "{{ tmpdir }}/vdo"
 
+        - name: git clone kvdo
+          git:
+            clone: yes
+            repo: 'https://github.com/dm-vdo/kvdo.git'
+            version: "{{ kvdo_version }}"
+            dest: "{{ tmpdir }}/kvdo"
 
-  - name: run make for vdo
-    raw: "cd {{ tmpdir }}/vdo && make"
+        - name: suppress VLA warnings in kvdo Makefiles
+          lineinfile:
+            path: "{{ tmpdir }}/kvdo/{{ item }}/Makefile"
+            insertafter: "^\t\t-Werror"
+            line: "\t\t-Wno-vla\t\t\t\t\\"
+          loop:
+            - uds
+            - vdo
 
-  - name: run kvdo make
-    raw: "cd {{ tmpdir }}/kvdo && make -C /usr/src/kernels/`uname -r` M=`pwd`"
+        - name: make vdo
+          command: make
+          args:
+            chdir: "{{ tmpdir }}/vdo"
 
-  - name: copy modules to current kernel
-    shell: "cd {{ tmpdir }}/kvdo && cp uds/uds.ko vdo/kvdo.ko /lib/modules/`uname -r`/extra/"
+        - name: make kvdo
+          command: "make -C /usr/src/kernels/{{ ansible_kernel }} M={{ tmpdir }}/kvdo"
+          args:
+            chdir: "{{ tmpdir }}/kvdo"
 
-  - name: depmod & modprobe
-    shell: "cd {{ tmpdir }}/kvdo && depmod -a; modprobe uds; modprobe kvdo"
+        - name: copy modules to current kernel
+          synchronize:
+            src: "{{ tmpdir }}/kvdo/{{ item }}"
+            dest: /lib/modules/{{ ansible_kernel }}/extra/
+          loop:
+            - uds/uds.ko
+            - vdo/kvdo.ko
 
-  - name: verify vdo in lsmod
-    shell: lsmod |grep vdo
-    register: lmodvdo
+        - name: depmod
+          command: depmod -a
+          args:
+            chdir: /lib/modules/{{ ansible_kernel }}/extra
+          changed_when: no
 
-  - debug: var=lsmodvdo.stdout
+        - name: modprobe
+          modprobe:
+            state: present
+            name: "{{ item }}"
+          loop:
+            - uds
+            - kvdo
 
-  - name: make install vdo
-    shell: "cd {{ tmpdir }}/vdo && make install"
+        - name: make install vdo userland tools
+          command: make install
+          args:
+            chdir: "{{ tmpdir }}/vdo"
 
-  - name: re-start vdo
-    service:
-      name: vdo
-      state: restarted
-
-  - name: daemon-reload
-    systemd: daemon_reload=yes
-      
+        - name: restart vdo
+          systemd:
+            name: vdo
+            state: restarted
+            daemon_reload: yes
